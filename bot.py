@@ -1,48 +1,66 @@
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-from aiogram.utils import executor
+import os
+from telegram import Update, Bot
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 
-# Your bot token and admin ID
-BOT_TOKEN = "7842830406:AAHn5vmaOqofHQT7KEn3vZwC2HgEzIU_Pj0"
-ADMIN_ID = 7298143104  # Your Telegram numeric ID
+# Load environment variables (for security)
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # Your bot token
+ADMIN_ID = int(os.getenv("ADMIN_ID"))  # Your Telegram User ID
 
+# Initialize the bot
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot)
 
-# User keyboard with "Ask Admin" button
-keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
-keyboard.add(KeyboardButton("Ask Admin"))
+# Dictionary to store user IDs for replies
+user_data = {}
 
-# Start command
-@dp.message_handler(commands=["start"])
-async def start(message: types.Message):
-    await message.reply("Welcome! Click 'Ask Admin' to send a message to the admin.", reply_markup=keyboard)
+# Function to handle /start command
+def start(update: Update, context: CallbackContext):
+    update.message.reply_text("Welcome! Send me a message, and I'll forward it to the admin.")
 
-# "Ask Admin" button response
-@dp.message_handler(lambda message: message.text == "Ask Admin")
-async def ask_admin(message: types.Message):
-    await message.reply("Please type your message below. I will forward it to the admin.")
+# Function to handle user messages and forward them to admin
+def forward_to_admin(update: Update, context: CallbackContext):
+    user = update.message.from_user
+    user_message = update.message.text
+    user_data[user.id] = user  # Store user details for replies
+    
+    # Forward message to admin
+    bot.send_message(
+        chat_id=ADMIN_ID,
+        text=f"📩 New message from {user.first_name} (@{user.username} | ID: {user.id}):\n{user_message}"
+    )
+    
+    # Notify the user
+    update.message.reply_text("✅ Your message has been sent to the admin.")
 
-# Forward user messages to the admin
-@dp.message_handler()
-async def forward_to_admin(message: types.Message):
-    user_info = f"📩 Message from @{message.from_user.username or 'No Username'} (ID: {message.from_user.id}):\n"
-    reply_tag = f"Reply{message.from_user.id}"  # Unique identifier for replies
-    await bot.send_message(ADMIN_ID, f"{user_info}{message.text}\n\n🔁 Reply using: {reply_tag} [your message]")
-    await message.reply("✅ Your message has been sent to the admin.")
+# Function to handle admin replies
+def reply_to_user(update: Update, context: CallbackContext):
+    if update.message.reply_to_message:
+        admin_reply = update.message.text
+        original_message = update.message.reply_to_message.text
+        
+        # Extract user ID from original message
+        if "ID:" in original_message:
+            user_id_start = original_message.rfind("ID:") + 4
+            user_id = int(original_message[user_id_start:].strip())
+            
+            # Send reply to the user
+            bot.send_message(chat_id=user_id, text=f"📢 Admin's reply: {admin_reply}")
+            update.message.reply_text("✅ Reply sent successfully.")
 
-# Admin replies to users
-@dp.message_handler(lambda message: message.chat.id == ADMIN_ID and message.text.startswith("Reply"))
-async def admin_reply(message: types.Message):
-    try:
-        parts = message.text.split(" ", 1)  # Split into reply tag and actual message
-        user_id = int(parts[0].replace("Reply", ""))  # Extract user ID
-        reply_text = parts[1]  # Extract the actual reply
+# Main function to run the bot
+def main():
+    updater = Updater(token=BOT_TOKEN, use_context=True)
+    dp = updater.dispatcher
 
-        await bot.send_message(user_id, f"📩 Admin's Reply:\n{reply_text}")
-        await message.reply("✅ Your reply has been sent.")
-    except (IndexError, ValueError):
-        await message.reply("❌ Incorrect reply format. Use: Reply<USER_ID> [your message]")
+    # Command handlers
+    dp.add_handler(CommandHandler("start", start))
 
-# Start the bot
-executor.start_polling(dp)
+    # Message handlers
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, forward_to_admin))
+    dp.add_handler(MessageHandler(Filters.reply & Filters.text, reply_to_user))
+
+    updater.start_polling()
+    updater.idle()
+
+if __name__ == '__main__':
+    main()
+
